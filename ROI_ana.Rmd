@@ -1,0 +1,1050 @@
+---
+title: "Draft protocol for ROI analysis"
+author: "SOCR Team (Yueyang Shen, Jun Chen, Ivo Dinov)"
+date: "`r format(Sys.time(),'%m/%d/%Y')`"
+output:
+  bookdown::html_document2:
+    theme: spacelab
+    highlight: tango
+    includes:
+     before_body: TCIU_header.html
+    toc: yes
+    number_sections: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+    code_folding: hide
+  word_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r error=F, message=F, warning=F}
+library(MNITemplate)
+library(ANTsR)
+library(ANTsRCore)
+library(neurobase)
+library(oro.nifti)
+raw <- readMNI("T1")
+brain_mask <- readMNI("Brain_Mask")
+nii_path <- "/Users/petersyy/Desktop/fmri_files/sub-001_T1w.nii"
+nii_image <- antsImageRead(nii_path)
+# nii_image<-abpN4(nii_image)
+# raw<-abpN4(as.antsImage(raw))
+# brain_mask<-abpN4(as.antsImage(brain_mask))
+
+```
+
+```{r}
+brain_mask
+```
+
+```{r}
+# code taken from:https://rdrr.io/github/neuroconductor/extrantsr/src/R/oro2ants.R
+tempants <- function(x, # object of class \code{antsImage}
+                     gzipped = TRUE, # logical if the tempfile should be gzipped or not
+                     ...
+                     ){
+  if (inherits(x, "character")) {
+    return(x)
+  } else {
+    if (inherits(x, "antsImage")) {
+      ext = ".nii"
+      if (gzipped) ext = ".nii.gz"
+      tfile = paste0(tempfile(), ext)
+      antsImageWrite(x, tfile)
+      rm( list = "x"); gc(); gc()
+      return(tfile)
+    } else if (inherits(x, "nifti")) {
+      tfile = tempimg(x, gzipped = gzipped, ...)
+      return(tfile)
+    } else {
+      stop("x has unknown class - not char or nifti")
+    }
+  }
+  return(tfile)
+}
+
+#' @title Convert Between antsImage and nifti objects
+#'
+#' @description NIfTI data can be converted between \code{antsImage} 
+#' (from the ANTsR package) and nifti S4 objects.
+#' @param img Object of class antsImage 
+#' @param reorient Reorientation passed to \code{\link{readnii}}
+#' @param reference Object of class \code{\link{nifti}} to copy header
+#' information
+#' @param ... Arguments passed to \code{\link{copyNIfTIHeader}} if 
+#' reference is set and \code{img} is \code{antsImage}
+#' @param cleanup temporary files are deleted after they are read in
+#' @param drop_dim Should \code{\link{drop_img_dim}} be run after reading? 
+#' Passed to \code{\link{readnii}}
+#' @param dtype Should \code{\link{datatyper}} be run after reading?
+#' Passed to \code{\link{readnii}}
+#' @param reset_slope Reset slope/intercept of image
+#' Passed to \code{\link{readnii}}
+#' @export
+#' @return Object of class \code{nifti}.
+#' @importFrom neurobase copyNIfTIHeader readnii mask_img check_outfile writenii datatyper
+#' @importFrom neurobase zscore_img same_dims robust_window remake_img xyz zero_pad
+#' @importFrom neurobase check_mask_fail niftiarr nii.stub
+#' @importFrom oro.nifti is.nifti
+ants2oro <- function(img, 
+                     reorient = FALSE,
+                     reference = NULL,
+                     ...,
+                     cleanup = TRUE,
+                     drop_dim = TRUE,
+                     dtype = TRUE,
+                     reset_slope = FALSE){
+  if ( is.antsImage(img) | is.character(img) ) {
+    if (is.antsImage(img) & !is.null(reference)) {
+      #######
+      # allow for reference, but need nifti
+      #######
+      if (!is.null(reference)) {
+        if (!is.nifti(reference)) {
+          stop("reference must be of class nifti")
+        }
+      }
+      #######
+      # Turn into array and then make nifti
+      #######
+      img = as.array(img)
+      img = as(img, Class = "array")
+      img = copyNIfTIHeader(img = reference, arr = img, ...)
+      gc();
+      return(img)
+    }
+    ############################
+    # Otherwise write image to disk
+    # And read in nifti
+    ############################    
+    if (is.antsImage(img)) {
+      remove = TRUE
+    }
+
+    fname = tempants(img)
+    img = readnii(fname, reorient = reorient, drop_dim = drop_dim, 
+                  dtype = dtype, reset_slope = reset_slope)
+    if (remove & cleanup & file.exists(fname)) {
+      file.remove(fname)
+    }
+    gc();
+    return(img)
+  }
+  if ( is.nifti(img) ) {
+    return(img)
+  }
+  stop("img not class nifti or antsImage or character")
+  return(NULL)
+}
+
+#' @title Convert Between nifti and antsImage    
+#'
+#' @description NIfTI data can be converted between \code{nifti} 
+#' (from the oro.nifti package) and \code{antsImage} objects.
+#' @param img Object of class \code{nifti} 
+#' @param reference Object of class \code{antsImage} to 
+#' copy header information (origin, spacing, direction) (experimental)
+#' @param cleanup temporary files are deleted after they are read in
+#' @param ... arguments passed to \code{\link{checkimg}}
+#' @export
+#' @importFrom ANTsRCore antsCopyImageInfo as.antsImage antsImageRead
+#' @return Object of class \code{antsImage}
+oro2ants <- function(img, reference = NULL,
+                     cleanup = TRUE,
+                     ...){
+  if (!is.null(reference)) {
+    if (is.antsImage(reference)) {
+      img = as(img, Class = "array")
+      aimg = as.antsImage(img)
+      aimg = antsCopyImageInfo(
+        target = aimg, 
+        reference = reference)
+      return(aimg)
+    }
+  }
+  if (  is.nifti(img) | is.character(img) ) {
+    if (is.nifti(img)){
+      remove = TRUE
+    }
+    fname = checkimg(img, ...)
+    stopifnot(file.exists(fname))
+    img = antsImageRead(fname)
+    if (remove & cleanup) {
+      file.remove(fname)
+    }    
+    return(img)
+  }
+  
+  if (inherits(img, "niftiImage")) {
+    fname = checkimg(img, ...)
+    stopifnot(file.exists(fname))
+    img = antsImageRead(fname)
+    if (cleanup) {
+      file.remove(fname)
+    }    
+    return(img)
+  }
+  if ( is.antsImage(img) ) {
+    return(img)    
+  }   
+  stop("img not class nifti or antsImage")
+  return(NULL)
+}
+```
+
+```{r}
+# using the original abpBrainExtraction function is problematic as
+# it contains error when knitting to Rmarkdown, I think the error
+# may because of the tmpdir mechanism in the function so I copy it as a function to gauge # the error. Code: https://github.com/ANTsX/ANTsR/blob/master/R/abpBrainExtraction.R
+abpBrainExtraction1 <- function(img, tem, temmask,
+                               temregmask = NULL, regtype="SyN", tdir = NA,
+                               num_threads = 1,
+                               pad = 0,
+                               verbose = FALSE) {
+  ### @useDynLib ANTsR, .registration = TRUE
+  
+  if (!is.null(num_threads)) {
+    itk_threads = Sys.getenv("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS")
+    on.exit({
+      Sys.setenv(ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS = itk_threads)
+    })
+    Sys.setenv(ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS = num_threads)
+  }
+  
+  if (missing(img) | missing(tem) | missing(temmask) |
+      is.null(img) | is.null(tem) | is.null(temmask)) {
+    cat("usage: abpBrainExtraction( img=imgToBExtract, tem = template, temmask = mask ) \n")
+    cat(" if no priors are passed, or a numerical prior is passed, then use kmeans \n")
+    return(NULL)
+  }
+  tempriors <- 3
+  npriors <- 3
+  
+  img = ANTsRCore::check_ants(img)
+  if (pad > 0) {
+    if (verbose) {
+      message("Padding image")
+    }
+    img = iMath(img, "PadImage", pad)
+  }
+  # file I/O - all stored in temp dir
+  if (is.na(tdir)) {
+    tdir <- tempdir()
+    initafffn <- tempfile(pattern = "antsr", tmpdir = tdir, fileext = "_InitialAff.mat")
+    EXTRACTION_WARP_OUTPUT_PREFIX <- tempfile(pattern = "antsr", tmpdir = tdir,
+                                              fileext = "_PriorMap")
+  } else {
+    initafffn <- paste(tdir, "antsr", "_InitialAff.mat", sep = "")
+    EXTRACTION_WARP_OUTPUT_PREFIX <- paste(tdir, "antsr", "_PriorMap", sep = "")
+  }
+  #   # ANTs parameters begin
+  #   ANTS_MAX_ITERATIONS <- "100x100x70x20"
+  #   ANTS_TRANSFORMATION <- "SyN[0.1,3,0]"
+  #   ANTS_LINEAR_METRIC_PARAMS <- "1,32,Regular,0.25"
+  #   ANTS_LINEAR_CONVERGENCE <- "[1000x1000x1000x10,1e-7,15]"
+  #   ANTS_LINEAR_CONVERGENCEFAST <- "[10x0x0x0,1e-7,10]"
+  #   ANTS_METRIC <- "CC"
+  #   ANTS_METRIC_PARAMS <- "1,4"
+  #   # ANTs parameters end
+  
+  # atropos params
+  locmrf<-paste(rep(1,img@dimension),collapse='x')
+  ATROPOS_BRAIN_EXTRACTION_INITIALIZATION <- "kmeans[3]"
+  ATROPOS_BRAIN_EXTRACTION_LIKELIHOOD <- "Gaussian"
+  ATROPOS_BRAIN_EXTRACTION_CONVERGENCE <- "[3,0.0001]"
+  ATROPOS_BRAIN_EXTRACTION_MRF <- paste("[0.2,",locmrf,"]")
+  ATROPOS_SEGMENTATION_INITIALIZATION <- "PriorProbabilityImages"
+  ATROPOS_SEGMENTATION_PRIOR_WEIGHT <- 0
+  ATROPOS_SEGMENTATION_LIKELIHOOD <- "Gaussian"
+  ATROPOS_SEGMENTATION_CONVERGENCE <- "[12,0.0001]"
+  ATROPOS_SEGMENTATION_POSTERIOR_FORMULATION <- "Socrates"
+  ATROPOS_SEGMENTATION_MRF <- paste("[0.11,",locmrf,"]")
+  # atropos params end
+  
+  imgsmall <- resampleImage(img , rep(4, img@dimension) )
+  temsmall <- resampleImage(tem , rep(4, img@dimension) )
+  # careful initialization of affine mapping , result stored in initafffn
+  if (!file.exists(initafffn)) {
+    if (verbose) {
+      message("Getting initial Affine Transformation")
+    }
+    if (is.null(temregmask)) {
+      temp<-affineInitializer(
+        fixedImage=temsmall, movingImage=imgsmall,
+        searchFactor=15, radianFraction=0.1, usePrincipalAxis=0,
+        localSearchIterations=10, txfn=initafffn,
+        num_threads = num_threads)
+    } else {
+      temregmask = check_ants(temregmask)
+      temp<-affineInitializer(
+        fixedImage=temsmall, movingImage=imgsmall,
+        searchFactor=15, radianFraction=0.1, usePrincipalAxis=0,
+        localSearchIterations=10, txfn=initafffn, mask=temregmask,
+        num_threads = num_threads)
+    }
+  }
+  
+
+  # get laplacian images
+  # FIXME the below antsregparams is the only part that uses these
+  # so remove the comments if need lapi and lapt, otherwise just 
+  # inefficient
+  # if (verbose) {
+  #   message("Getting Laplacian of image")
+  # }
+  # lapi = iMath(img, "Laplacian", 1.5, 1)
+  # if (verbose) {
+  #   message("Getting Laplacian of template")
+  # }
+  # lapt = iMath(tem, "Laplacian", 1.5, 1)
+  
+  # FIXME should add mask to below via -x option
+  # dtem <- antsImageClone(tem, "double")
+  # dimg <- antsImageClone(img, "double")
+  
+  #   antsregparams <- list(d = img@dimension, u = 1,
+  #                         o = EXTRACTION_WARP_OUTPUT_PREFIX,
+  #                         r = initafffn, z = 1, w = "[0.025,0.975]",
+  #                         m = paste("mattes[", antsrGetPointerName(antsImageClone(lapt,
+  #                                                                                 "double")), ",", antsrGetPointerName(antsImageClone(lapi, "double")),
+  #                                   ",", "0.5,32]", sep = ""),
+  #                         c = "[50x50x50x10,1e-9,15]", t = "SyN[0.1,3,0]",
+  #                         f = "6x4x2x1", s = "4x2x1x0")
+  outprefix <- EXTRACTION_WARP_OUTPUT_PREFIX
+  if (verbose) {
+    message("Running Registration")
+  }    
+  mytx<-antsRegistration( tem, img, typeofTransform = regtype,
+                          initialTransform=initafffn, mask=temregmask,
+                          verbose = verbose > 1)
+  fwdtransforms <- mytx$fwdtransforms
+  invtransforms <- mytx$invtransforms
+  rm(mytx)
+  if (verbose) {
+    message("Applying Transformations")
+  }        
+  temmaskwarped <- antsApplyTransforms( img, temmask,
+                                        transformlist = invtransforms,
+                                        interpolator = "nearestNeighbor",
+                                        verbose = verbose )
+  temmaskwarped<-thresholdImage( temmaskwarped, 0.5, 1 )
+  tmp <- antsImageClone(temmaskwarped)
+  
+  if (verbose) {
+    message("Dilating and filling holes")
+  }  
+  tmp = iMath(temmaskwarped, "MD", 2)
+  tmp = iMath(tmp, "GetLargestComponent", 2)
+  tmp = iMath(tmp, "FillHoles") %>% thresholdImage( 1, 2 )
+  gc()
+  seg <- antsImageClone(img, "unsigned int")
+  tmpi <- antsImageClone(tmp, "unsigned int")
+  if (verbose) {
+    message("Running Atropos")
+  }    
+  atroparams <- list(d = img@dimension, a = img,
+                     m = ATROPOS_BRAIN_EXTRACTION_MRF,
+                     o = seg, 
+                     x = tmpi,
+                     i = ATROPOS_BRAIN_EXTRACTION_INITIALIZATION,
+                     c = ATROPOS_BRAIN_EXTRACTION_CONVERGENCE,
+                     k = ATROPOS_BRAIN_EXTRACTION_LIKELIHOOD,
+                     v = as.integer(verbose > 1)
+                     )
+  atropos(atroparams)
+  
+  if (verbose) {
+    message("Post-processing of atropos masks")
+  }   
+  fseg <- antsImageClone(  seg, "float")
+  segwm<-thresholdImage(  fseg, 3, 3 )
+  seggm<-thresholdImage(  fseg, 2, 2)
+  segcsf<-thresholdImage( fseg, 1, 1)
+  segwm = iMath(segwm, "GetLargestComponent")
+  seggm = iMath(seggm, "GetLargestComponent")
+  seggm = iMath(seggm, "FillHoles")  %>% thresholdImage( 1, 2 )
+  segwm[segwm > 0.5] <- 3
+  tmp = iMath(segcsf, "ME", 10)
+  seggm[seggm < 0.5 & tmp > 0.5] <- 2
+  seggm[seggm > 0.5] <- 2
+  finalseg <- antsImageClone(img)
+  finalseg[finalseg > 0] <- 0
+  finalseg[seggm > 0.5] <- 2
+  finalseg[segwm > 0.5 & seggm < 0.5] <- 3
+  finalseg[segcsf > 0.5 & seggm < 0.5 & segwm < 0.5] <- 1
+  rm(atroparams)
+  
+  # BA - finalseg looks good! could stop here
+  tmp<-thresholdImage( finalseg, 2, 3)
+  rm(finalseg)
+  
+  if (verbose) {
+    message("Post-processing final segmentation")
+  }   
+  tmp = iMath(tmp, "ME", 2)
+  tmp = iMath(tmp, "GetLargestComponent", 2)
+  tmp = iMath(tmp, "MD", 4)
+  tmp = iMath(tmp, "FillHoles")  %>% thresholdImage( 1, 2 )
+  tmp[tmp > 0 | temmaskwarped > 0.25] <- 1
+  tmp = iMath(tmp, "MD", 5)
+  tmp = iMath(tmp, "ME", 5)
+  finalseg2 = iMath(tmp, "FillHoles")  %>% thresholdImage( 1, 2 )
+  rm(tmp)
+  
+  if (verbose) {
+    message("Calculating Maurer Distance")
+  }   
+  # FIXME - steps above should all be checked again ...
+  dseg = iMath(finalseg2, "ME", 5)
+  dseg = iMath(dseg, "MaurerDistance")
+  droundmax <- 20
+  dsearchvals <- c(1:100)/100 * droundmax - 0.5 * droundmax
+  mindval <- min(dseg)
+  loval <- mindval
+  distmeans <- rep(0, length(dsearchvals))
+  ct <- 1
+  for (dval in (dsearchvals)) {
+    loval <- (dval - 1.5)
+    dsegt <- antsImageClone(dseg)
+    dsegt[dsegt >= loval & dsegt < dval] <- 1
+    distmeans[ct] <- mean(img[dsegt == 1])
+    ct <- ct + 1
+  }
+  localmin <- which.min(distmeans)
+  dthresh <- dsearchvals[localmin]
+  bmask <- antsImageClone(finalseg2)
+  bmask<-thresholdImage( dseg, mindval, dthresh )
+  brain <- antsImageClone(img)
+  brain[finalseg2 < 0.5] <- 0
+  if (pad > 0) {
+    if (verbose) {
+      message("De-Padding image")
+    }
+    brain = iMath(brain, "PadImage", -pad)
+    finalseg2 = iMath(finalseg2, "PadImage", -pad)
+    seg = iMath(seg, "PadImage", -pad)
+  }
+  return(list(brain = brain, bmask = finalseg2,
+              kmeansseg = seg, fwdtransforms = fwdtransforms,
+              invtransforms = invtransforms,
+              temmaskwarped = temmaskwarped, distmeans = distmeans,
+              dsearchvals = dsearchvals, 
+              pad = pad))
+}
+```
+
+
+```{r message=TRUE}
+# ex <- abpBrainExtraction(nii_image, as.antsImage(raw), as.antsImage(brain_mask),verbose = TRUE)
+ex <- abpBrainExtraction1(nii_image, as.antsImage(raw), as.antsImage(brain_mask),regtype = 'SyNabp')
+# Perform skull stripping, first input is the skull+brain 
+# second input is an examplar skull+brain
+# third input shows the same template withe skull removed
+```
+
+
+# Check that the extracted brain makes sense
+```{r}
+library(oro.nifti)
+orthographic(ants2oro(ex$brain))
+```
+
+# ICBM atlas
+
+```{r}
+library(oro.nifti) 
+nii_path <- "/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_cerebellum.nii"
+fMRIVolume <- readNIfTI(nii_path, reorient=FALSE)
+ICBM_ants_temporal <- antsImageRead(nii_path)
+orthographic(fMRIVolume)
+```
+```{r}
+library(oro.nifti) 
+nii_path <- "/Users/petersyy/Downloads/icbm452_atlas_air12_sinc.nii"
+fMRIVolume <- readNIfTI(nii_path, reorient=FALSE)
+ICBM_ants <- antsImageRead(nii_path)
+orthographic(fMRIVolume)
+```
+
+
+# Go through the ICBM pipeline
+
+```{r}
+# perform registration on the extracted brain
+library(ANTsR)
+transform_para <- antsRegistration(fixed = ICBM_ants,moving=ex$brain,typeofTransform = "SyN")
+```
+```{r}
+regist_im <- antsApplyTransforms(fixed = ex$brain, moving = ICBM_ants, transformlist = transform_para$invtransforms)
+```
+```{r}
+orthographic(ants2oro(t1_space_data))
+```
+
+
+```{r}
+library(ANTsR)
+imgIn  = antsImageRead("/Users/petersyy/Desktop/fmri_files/sub-001_task-Training_run-01_bold.nii")
+meanbold = getAverageOfTimeSeries( imgIn )
+# perhaps perform brain skull stripping? But there is no fine details here - I am not sure the skull stripping would be effective
+```
+
+
+
+# Performing registration between functional MRI and structural MRI
+```{r}
+nii_path <- "/Users/petersyy/Desktop/fmri_files/sub-001_T1w.nii"
+nii_image <- antsImageRead(nii_path)
+boldmap = antsRegistration( meanbold, ex$brain, typeofTransform="Rigid")
+
+```
+
+
+
+
+```{r}
+```
+
+
+
+```{r}
+orthographic(ants2oro(fmri_space))
+```
+
+```{r}))
+```
+
+```{r}
+```
+
+
+
+```{r}
+# first transform the functional mask (containing label 16) to the structural MRI space (transform_para)
+# then convert the the sMRI space to fMRI by boldmap
+nii_path <- "/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_temporal.nii"
+ICBM_ants_temporal <- antsImageRead(nii_path)
+temporal_mask = ICBM_ants_temporal
+t1_space_data <- antsApplyTransforms(fixed = regist_im, moving = temporal_mask, transformlist = c(transform_para$invtransforms))
+# Then map to the fMRI space
+fmri_space <- antsApplyTransforms(fixed = meanbold, moving =t1_space_data, transformlist = c(boldmap$invtransforms))
+orthographic(ants2oro(fmri_space))
+```
+
+```{r}
+fmri_space
+```
+```{r}
+96*96*68
+```
+
+
+```{r}
+target_voxels <- which(fmri_space>0,arr.ind = TRUE)
+# number of target voxels
+dim(target_voxels)
+```
+
+
+```{r}
+dims  =dim(target_voxels)
+signal_mat <- matrix(0, nrow=dims[1], ncol=dim(imgIn)[4])
+
+for (i in 1:dims[1]){
+  signal_mat[i,] <- as.vector(imgIn[as.integer(target_voxels[i,1]),as.integer(target_voxels[i,2]),as.integer(target_voxels[i,3]),])
+}
+
+```
+
+
+#take the row mean for the signal matrix and plot row_mean in plotly
+```{r}
+library(plotly)
+library(zoo)
+row_mean <- colMeans(signal_mat)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = row_mean-row_mean[1], type = 'scatter', mode = 'lines', name = 'Region 16 Original Signal')
+
+smoothed_signal <- rollmean(row_mean,5)
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = smoothed_signal-smoothed_signal[1], name = 'Region 16 Smoothed Line')
+p
+```
+
+
+```{r}
+
+# Different region quick visualization
+different_region_icm <- function(filename){
+  mask_reg <- antsImageRead(filename)
+#first map back to the t1-structural space
+t1_space_data <- antsApplyTransforms(fixed = regist_im, moving = mask_reg, transformlist = c(transform_para$invtransforms))
+# Then map to the fMRI space
+fmri_space <- antsApplyTransforms(fixed = meanbold, moving =t1_space_data, transformlist = c(boldmap$invtransforms))
+target_voxels <- which(fmri_space>0,arr.ind = TRUE)
+dims  =dim(target_voxels)
+signal_mat <- matrix(0, nrow=dims[1], ncol=dim(imgIn)[4])
+
+for (i in 1:dims[1]){
+  signal_mat[i,] <- as.vector(imgIn[as.integer(target_voxels[i,1]),as.integer(target_voxels[i,2]),as.integer(target_voxels[i,3]),])
+}
+return (colMeans(signal_mat))
+}
+```
+
+
+```{r}
+# Different region here:
+region_cere <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_cerebellum.nii")
+# p <- plot_ly(x = 1:dim(imgIn)[4], y = region_cere-region_cere[1], type = 'scatter', mode = 'lines', name = 'Cerebelum Original Signal')
+p <- plot_ly()
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_cere,5)- rollmean(region_cere,5)[1], name = 'Cerebelum Smoothed Line')
+# Frontal
+region_frontal <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_frontal.nii")
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_frontal-region_frontal[1], name = 'Frontal Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_frontal,5)- rollmean(region_frontal,5)[1], name = 'Frontal Smoothed Line')
+# Insula
+region_insula <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_insula.nii")
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_insula-region_insula[1], name = 'Insula Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_insula,5)- rollmean(region_insula,5)[1], name = 'Insula Smoothed Line')
+# Occipital
+region_occipital <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_occipital.nii")
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_occipital-region_occipital[1], name = 'Occipital Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_occipital,5)- rollmean(region_occipital,5)[1], name = 'Occipital Smoothed Line')
+# Parietal
+region_parietal <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_parietal.nii")
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_parietal-region_parietal[1], name = 'Parietal Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_parietal,5)- rollmean(region_parietal,5)[1], name = 'Parietal Smoothed Line')
+# Temporal
+region_temporal <- different_region_icm("/Users/petersyy/Desktop/fmri_files/prob/icbm452_atlas_probability_temporal.nii")
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_temporal-region_temporal[1], name = 'Temporal Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_temporal,5)- rollmean(region_temporal,5)[1], name = 'Temporal Smoothed Line')
+p
+
+```
+
+
+
+
+```{r}
+# Different region here: https://github.com/neurodata/neuroparc/blob/master/atlases/label/Human/Metadata-json/Desikan_space-MNI152NLin6_res-1x1x1.json
+# 16: L_middle_temporal_gyrus
+region_16 <- different_region(16)
+# map to baseline(t=0)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = region_16-region_16[1], type = 'scatter', mode = 'lines', name = 'Region 16 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_16,5)- rollmean(region_16,5)[1], name = 'Region 16 Smoothed Line')
+# 63: R_rostral_middle_frontal_gyrus
+region_63 <- different_region(63)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_63-region_63[1], name = 'Region 63 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_63,5)- rollmean(region_63,5)[1], name = 'Region 63 Smoothed Line')
+# 69: R_temporal pole
+region_69 <- different_region(69)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_69-region_69[1], name = 'Region 69 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_69,5)- rollmean(region_69,5)[1], name = 'Region 69 Smoothed Line')
+# 10: L_inferior_temporal_gyrus
+region_10 <- different_region(10)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_10-region_10[1], name = 'Region 10 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_10,5)- rollmean(region_10,5)[1], name = 'Region 10 Smoothed Line')
+# 23: L_postcentral_gyrus
+region_23 <- different_region(23)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_23-region_23[1], name = 'Region 23 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_23,5)- rollmean(region_23,5)[1], name = 'Region 23 Smoothed Line')
+p
+```
+
+
+
+
+# Exemplar MNI152 with skull
+```{r}
+#https://github.com/Jfortin1/MNITemplate/blob/master/README.md
+orthographic(raw,col=c("black",rainbow(100)))
+```
+```{r}
+#https://github.com/Jfortin1/MNITemplate/blob/master/README.md
+orthographic(brain_mask,col=c("black",rainbow(100)))
+```
+
+
+# perform registration
+
+```{r}
+# template used:https://github.com/neurodata/neuroparc/blob/master/atlases/reference_brains/MNI152NLin6_res-1x1x1_T1w_descr-brain.nii.gz
+template <- antsImageRead("/Users/petersyy/Desktop/fmri_files/MNI152NLin6_res-1x1x1_T1w_descr-brain.nii.gz")
+# perform registration on the extracted brain
+transform_para <- antsRegistration(fixed = template,moving=ex$brain,typeofTransform = "SyNabp")
+#apply the fitted transforms
+regist_im <- antsApplyTransforms(fixed = ex$brain, moving = template, transformlist = transform_para$invtransforms)
+```
+
+# The individual extracted brain before registration
+```{r}
+orthographic(ants2oro(ex$brain))
+```
+
+
+# The individual brain after registration with fine details from the template (MNI)
+```{r}
+
+orthographic(ants2oro(regist_im))
+```
+
+# The raw template file (MNI):https://github.com/neurodata/neuroparc/blob/master/atlases/reference_brains/MNI152NLin6_res-1x1x1_T1w_descr-brain.nii.gz
+```{r}
+
+orthographic(ants2oro(template))
+```
+
+
+## Using MNI atlas to segment the brain
+
+```{r}
+# https://github.com/neurodata/neuroparc/tree/master/atlases/label/Human
+# 16 is L_middle_temporal_gyrus
+# https://github.com/neurodata/neuroparc/blob/master/atlases/label/Human/Metadata-json/Desikan_space-MNI152NLin6_res-1x1x1.json
+parc <- antsImageRead("/Users/petersyy/Desktop/fmri_files/Desikan_space-MNI152NLin6_res-1x1x1.nii.gz")
+#10L_inferior_temporal_gyrus/31 L_superior_temporal_gyru/34L_temporal_pol/35L_transverse_temporal_cortex/37R_Banks_superior_temporal_sulcus/45R_inferior_temporal_gyru/51R_middle_temporal_gyrus/66R_superior_temporal_gyrus/69R_temporal_pole/70 R_transverse_temporal_cortex
+thres_res = template*(thresholdImage(parc, 16, 16)+thresholdImage(parc,10,10)+thresholdImage(parc,31,31)+thresholdImage(parc,34,34)+thresholdImage(parc,35,35)+thresholdImage(parc,37,37)+thresholdImage(parc,45,45)+thresholdImage(parc,51,51)+thresholdImage(parc,66,66)+thresholdImage(parc,69,69)+thresholdImage(parc,70,70))
+orthographic(ants2oro(thres_res),col=c("black",rainbow(100)))
+```
+
+```{r}
+# Different region here: https://github.com/neurodata/neuroparc/blob/master/atlases/label/Human/Metadata-json/Desikan_space-MNI152NLin6_res-1x1x1.json
+# 16: L_middle_temporal_gyrus
+p <- plot_ly()
+region_16 <- different_region(16)
+# map to baseline(t=0)
+# p <- plot_ly(x = 1:dim(imgIn)[4], y = region_16-region_16[1], type = 'scatter', mode = 'lines', name = 'L_middle_temporal_gyrus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_16,5)- rollmean(region_16,5)[1], name = 'L_middle_temporal_gyrus Smoothed Line')
+# 10: L_inferior_temporal_gyrus
+region_10 <- different_region(10)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_10-region_10[1], name = 'L_inferior_temporal_gyrus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_10,5)- rollmean(region_10,5)[1], name = 'L_inferior_temporal_gyrus Smoothed Line')
+# 31: L_superior_temporal_gyrus
+region_31 <- different_region(31)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_31-region_31[1], name = 'L_superior_temporal_gyrus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_31,5)- rollmean(region_31,5)[1], name = 'L_superior_temporal_gyrus Smoothed Line')
+# 34: L_temporal pole
+region_34 <- different_region(34)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_34-region_34[1], name = 'L_temporal pole Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_34,5)- rollmean(region_34,5)[1], name = 'L_temporal pole Smooth')
+#/35L_transverse_temporal_cortex/37R_Banks_superior_temporal_sulcus/45R_inferior_temporal_gyru/51R_middle_temporal_gyrus/66R_superior_temporal_gyrus/69R_temporal_pole/70 R_transverse_temporal_cortex
+# 35: L_transverse_temporal_cortex
+region_35 <- different_region(35)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_35-region_35[1], name = 'L_transverse_temporal_cortex Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_35,5)- rollmean(region_35,5)[1], name = 'L_transverse_temporal_cortex Smoothed Line')
+# 37: R_Banks_superior_temporal_sulcus
+region_37 <- different_region(37)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_37-region_37[1], name = 'R_Banks_superior_temporal_sulcus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_37,5)- rollmean(region_37,5)[1], name = 'R_Banks_superior_temporal_sulcus Smoothed Line')
+# 45: R_inferior_temporal_gyru
+region_45 <- different_region(45)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_45-region_45[1], name = 'R_inferior_temporal_gyru Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_45,5)- rollmean(region_45,5)[1], name = 'R_inferior_temporal_gyrus Smoothed Line')
+# 51: R_middle_temporal_gyrus
+region_51 <- different_region(51)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_51-region_51[1], name = 'R_middle_temporal_gyrus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_51,5)- rollmean(region_51,5)[1], name = 'R_middle_temporal_gyrus Smoothed Line')
+# 66: R_superior_temporal_gyrus
+region_66 <- different_region(66)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_66-region_66[1], name = 'R_superior_temporal_gyrus Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_66,5)- rollmean(region_66,5)[1], name = 'R_superior_temporal_gyrus Smoothed Line')
+# 69: R_temporal pole
+region_69 <- different_region(69)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_69-region_69[1], name = 'R_temporal pole Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_69,5)- rollmean(region_69,5)[1], name = 'R_temporal pole Smoothed')
+
+#70 R_transverse_temporal_cortex
+region_70 <- different_region(70)
+# p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_70-region_70[1], name = 'R_transverse_temporal_cortex Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_70,5)- rollmean(region_70,5)[1], name = 'R_transverse_temporal_cortex Smoothed Line',legend="legend2")
+
+
+p
+```
+```{r}
+# pop
+p <- p %>% add_trace(x = c(0,100,200,300,400)+5,width=c(10,10,10,10,10),y=c(30,30,30,30,30),base=c(-15,-15,-15,-15,-15),type='bar',marker = list(color='gray', line = list(color='gray', width=0.1)),opacity=0.2, name="Pop", text = "Pop", hoverinfo = 'Pop') %>%
+# Rock
+  add_trace(x = c(10,110,210,310)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='blue', line = list(color='blue', width=0.1)),opacity=0.2, name="Rock", text = "Rock", hoverinfo = 'Rock')%>%
+#Country
+  add_trace(x = c(20,120,220,320)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='green', line = list(color='green', width=0.1)),opacity=0.2, name="Country", text = "Country", hoverinfo = 'Country') %>%
+  # Blues
+  add_trace(x = c(30,130,230,330)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='red', line = list(color='red', width=0.1)),opacity=0.2, name="Blues", text = "Blues", hoverinfo = 'Blues') %>%
+  #Disco
+  add_trace(x = c(40,140,240,340)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='yellow', line = list(color='yellow', width=0.1)),opacity=0.2, name="Disco", text = "Disco", hoverinfo = 'Disco') %>%
+  # Metal
+  add_trace(x = c(50,150,250,350)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='purple', line = list(color='purple', width=0.1)),opacity=0.2, name="Metal", text = "Metal", hoverinfo = 'Metal') %>%
+  # Reggae
+  add_trace(x = c(60,160,260,360)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='orange', line = list(color='orange', width=0.1)),opacity=0.2, name="Reggae", text = "Reggae", hoverinfo = 'Reggae') %>%
+  # Classical
+  add_trace(x = c(70,170,270,370)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='pink', line = list(color='pink', width=0.1)),opacity=0.2, name="Classical", text = "Classical", hoverinfo = 'Classical') %>%
+  # Hiphop
+  add_trace(x = c(80,180,280,380)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='brown', line = list(color='brown', width=0.1)),opacity=0.2, name="Hiphop", text = "Hiphop", hoverinfo = 'Hiphop') %>%
+  # Jazz
+  add_trace(x = c(90,190,290,390)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='black', line = list(color='black', width=0.1)),opacity=0.2, name="Jazz", text = "Jazz", hoverinfo = 'Jazz') 
+
+```
+
+```{r}
+
+p%>%layout(legend = list(orientation = "h"))
+# split the legend into two columns
+
+
+```
+
+```{r}
+# Different region here: https://github.com/neurodata/neuroparc/blob/master/atlases/label/Human/Metadata-json/Desikan_space-MNI152NLin6_res-1x1x1.json
+# 16: L_middle_temporal_gyrus
+p <- plot_ly()
+region_16 <- different_region(16)
+# map to baseline(t=0)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = region_16-region_16[1], type = 'scatter', mode = 'lines', name = 'L_middle_temporal_gyrus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_16,5)- rollmean(region_16,5)[1], name = 'L_middle_temporal_gyrus Smoothed Line')
+# 10: L_inferior_temporal_gyrus
+region_10 <- different_region(10)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_10-region_10[1], name = 'L_inferior_temporal_gyrus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_10,5)- rollmean(region_10,5)[1], name = 'L_inferior_temporal_gyrus Smoothed Line')
+# 31: L_superior_temporal_gyrus
+region_31 <- different_region(31)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_31-region_31[1], name = 'L_superior_temporal_gyrus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_31,5)- rollmean(region_31,5)[1], name = 'L_superior_temporal_gyrus Smoothed Line')
+# 34: L_temporal pole
+region_34 <- different_region(34)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_34-region_34[1], name = 'L_temporal pole Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_34,5)- rollmean(region_34,5)[1], name = 'L_temporal pole Smooth')
+#/35L_transverse_temporal_cortex/37R_Banks_superior_temporal_sulcus/45R_inferior_temporal_gyru/51R_middle_temporal_gyrus/66R_superior_temporal_gyrus/69R_temporal_pole/70 R_transverse_temporal_cortex
+# 35: L_transverse_temporal_cortex
+region_35 <- different_region(35)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_35-region_35[1], name = 'L_transverse_temporal_cortex Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_35,5)- rollmean(region_35,5)[1], name = 'L_transverse_temporal_cortex Smoothed Line')
+# 37: R_Banks_superior_temporal_sulcus
+region_37 <- different_region(37)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_37-region_37[1], name = 'R_Banks_superior_temporal_sulcus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_37,5)- rollmean(region_37,5)[1], name = 'R_Banks_superior_temporal_sulcus Smoothed Line')
+# 45: R_inferior_temporal_gyru
+region_45 <- different_region(45)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_45-region_45[1], name = 'R_inferior_temporal_gyru Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_45,5)- rollmean(region_45,5)[1], name = 'R_inferior_temporal_gyrus Smoothed Line')
+# 51: R_middle_temporal_gyrus
+region_51 <- different_region(51)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_51-region_51[1], name = 'R_middle_temporal_gyrus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_51,5)- rollmean(region_51,5)[1], name = 'R_middle_temporal_gyrus Smoothed Line')
+# 66: R_superior_temporal_gyrus
+region_66 <- different_region(66)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_66-region_66[1], name = 'R_superior_temporal_gyrus Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_66,5)- rollmean(region_66,5)[1], name = 'R_superior_temporal_gyrus Smoothed Line')
+# 69: R_temporal pole
+region_69 <- different_region(69)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_69-region_69[1], name = 'R_temporal pole Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_69,5)- rollmean(region_69,5)[1], name = 'R_temporal pole Smoothed')
+
+#70 R_transverse_temporal_cortex
+region_70 <- different_region(70)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_70-region_70[1], name = 'R_transverse_temporal_cortex Original Signal')
+# p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_70,5)- rollmean(region_70,5)[1], name = 'R_transverse_temporal_cortex Smoothed Line',legend="legend2")
+
+```
+
+
+```{r}
+# pop
+p <- p %>% add_trace(x = c(0,100,200,300,400)+5,width=c(10,10,10,10,10),y=c(30,30,30,30,30),base=c(-15,-15,-15,-15,-15),type='bar',marker = list(color='gray', line = list(color='gray', width=0.1)),opacity=0.2, name="Pop", text = "Pop", hoverinfo = 'Pop') %>%
+# Rock
+  add_trace(x = c(10,110,210,310)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='blue', line = list(color='blue', width=0.1)),opacity=0.2, name="Rock", text = "Rock", hoverinfo = 'Rock')%>%
+#Country
+  add_trace(x = c(20,120,220,320)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='green', line = list(color='green', width=0.1)),opacity=0.2, name="Country", text = "Country", hoverinfo = 'Country') %>%
+  # Blues
+  add_trace(x = c(30,130,230,330)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='red', line = list(color='red', width=0.1)),opacity=0.2, name="Blues", text = "Blues", hoverinfo = 'Blues') %>%
+  #Disco
+  add_trace(x = c(40,140,240,340)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='yellow', line = list(color='yellow', width=0.1)),opacity=0.2, name="Disco", text = "Disco", hoverinfo = 'Disco') %>%
+  # Metal
+  add_trace(x = c(50,150,250,350)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='purple', line = list(color='purple', width=0.1)),opacity=0.2, name="Metal", text = "Metal", hoverinfo = 'Metal') %>%
+  # Reggae
+  add_trace(x = c(60,160,260,360)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='orange', line = list(color='orange', width=0.1)),opacity=0.2, name="Reggae", text = "Reggae", hoverinfo = 'Reggae') %>%
+  # Classical
+  add_trace(x = c(70,170,270,370)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='pink', line = list(color='pink', width=0.1)),opacity=0.2, name="Classical", text = "Classical", hoverinfo = 'Classical') %>%
+  # Hiphop
+  add_trace(x = c(80,180,280,380)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='brown', line = list(color='brown', width=0.1)),opacity=0.2, name="Hiphop", text = "Hiphop", hoverinfo = 'Hiphop') %>%
+  # Jazz
+  add_trace(x = c(90,190,290,390)+5,width=c(10,10,10,10),y=c(30,30,30,30),base=c(-15,-15,-15,-15),type='bar',marker = list(color='black', line = list(color='black', width=0.1)),opacity=0.2, name="Jazz", text = "Jazz", hoverinfo = 'Jazz') 
+
+p%>%layout(legend = list(orientation = "h"))
+# split the legend into two columns
+
+```
+
+
+
+```{r}
+t1_space_data <- antsApplyTransforms(fixed = regist_im, moving = thres_res, transformlist = c(transform_para$invtransforms))
+# Then map to the fMRI space
+fmri_space_temp <- antsApplyTransforms(fixed = meanbold, moving =t1_space_data, transformlist = c(boldmap$invtransforms))
+```
+
+```{r}
+orthographic(ants2oro(fmri_space_temp),col=c("black",rainbow(100)))
+```
+```{r}
+target_voxels <- which(fmri_space_temp>0,arr.ind = TRUE)
+# number of target voxels
+dim(target_voxels)
+```
+
+
+```{r}
+dims  =dim(target_voxels)
+signal_mat <- matrix(0, nrow=dims[1], ncol=dim(imgIn)[4])
+
+for (i in 1:dims[1]){
+  signal_mat[i,] <- as.vector(imgIn[as.integer(target_voxels[i,1]),as.integer(target_voxels[i,2]),as.integer(target_voxels[i,3]),])
+}
+
+```
+
+
+#take the row mean for the signal matrix and plot row_mean in plotly
+```{r}
+library(plotly)
+library(zoo)
+row_mean <- colMeans(signal_mat)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = row_mean-row_mean[1], type = 'scatter', mode = 'lines', name = 'Region 16 Original Signal')
+
+smoothed_signal <- rollmean(row_mean,5)
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = smoothed_signal-smoothed_signal[1], name = 'Region 16 Smoothed Line')
+p
+```
+
+
+# The functional parcellation for the MNI-152 brain
+```{r}
+orthographic(ants2oro(parc),col=c("black",rainbow(100)))
+```
+
+**Since the structural MRI orientation is different compared to fMRI another registration needs to be performed.**
+
+
+
+```{r}
+imgIn  = antsImageRead("/Users/petersyy/Desktop/fmri_files/sub-001_task-Training_run-01_bold.nii")
+meanbold = getAverageOfTimeSeries( imgIn )
+# perhaps perform brain skull stripping? But there is no fine details here - I am not sure the skull stripping would be effective
+```
+
+***The fMRI dimension***
+```{r}
+meanbold
+```
+```{r}
+orthographic(ants2oro(meanbold),col=c("black",rainbow(100)))
+```
+
+
+***The sMRI dimension***
+```{r}
+ex$brain
+```
+
+
+# Performing registration between functional MRI and structural MRI
+```{r}
+boldmap = antsRegistration( meanbold, regist_im, typeofTransform='Rigid' )
+
+```
+
+
+
+```{r}
+# first transform the functional mask (containing label 16) to the structural MRI space (transform_para)
+# then convert the the sMRI space to fMRI by boldmap
+temporal_mask = template*thresholdImage(parc, 16, 16)
+raw_target <- antsApplyTransforms(fixed = meanbold, moving = temporal_mask, transformlist = c(transform_para$invtransforms,boldmap$invtransforms))
+```
+
+
+```{r}
+target_voxels <- which(raw_target>0,arr.ind = TRUE)
+# number of target voxels
+dim(target_voxels)
+```
+
+
+```{r}
+dims  =dim(target_voxels)
+signal_mat <- matrix(0, nrow=dims[1], ncol=dim(imgIn)[4])
+
+for (i in 1:dims[1]){
+  signal_mat[i,] <- as.vector(imgIn[as.integer(target_voxels[i,1]),as.integer(target_voxels[i,2]),as.integer(target_voxels[i,3]),])
+}
+
+```
+
+
+#take the row mean for the signal matrix and plot row_mean in plotly
+```{r}
+library(plotly)
+library(zoo)
+row_mean <- colMeans(signal_mat)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = row_mean, type = 'scatter', mode = 'lines', name = 'Region 16 Original Signal')
+
+smoothed_signal <- rollmean(row_mean,5)
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = smoothed_signal, name = 'Region 16 Smoothed Line')
+p
+```
+
+```{r}
+# Different region quick visualization
+different_region <- function(region_lab){
+  mask_reg = template*thresholdImage(parc, region_lab, region_lab)
+#first map back to the t1-structural space
+t1_space_data <- antsApplyTransforms(fixed = regist_im, moving = mask_reg, transformlist = c(transform_para$invtransforms))
+# Then map to the fMRI space
+fmri_space <- antsApplyTransforms(fixed = meanbold, moving =t1_space_data, transformlist = c(boldmap$invtransforms))
+target_voxels <- which(fmri_space>0,arr.ind = TRUE)
+dims  =dim(target_voxels)
+signal_mat <- matrix(0, nrow=dims[1], ncol=dim(imgIn)[4])
+
+for (i in 1:dims[1]){
+  signal_mat[i,] <- as.vector(imgIn[as.integer(target_voxels[i,1]),as.integer(target_voxels[i,2]),as.integer(target_voxels[i,3]),])
+}
+return (colMeans(signal_mat))
+}
+```
+
+```{r}
+# Different region here: https://github.com/neurodata/neuroparc/blob/master/atlases/label/Human/Metadata-json/Desikan_space-MNI152NLin6_res-1x1x1.json
+# 16: L_middle_temporal_gyrus
+region_16 <- different_region(16)
+# map to baseline(t=0)
+p <- plot_ly(x = 1:dim(imgIn)[4], y = region_16-region_16[1], type = 'scatter', mode = 'lines', name = 'Region 16 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_16,5)- rollmean(region_16,5)[1], name = 'Region 16 Smoothed Line')
+# 63: R_rostral_middle_frontal_gyrus
+region_63 <- different_region(63)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_63-region_63[1], name = 'Region 63 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_63,5)- rollmean(region_63,5)[1], name = 'Region 63 Smoothed Line')
+# 69: R_temporal pole
+region_69 <- different_region(69)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_69-region_69[1], name = 'Region 69 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_69,5)- rollmean(region_69,5)[1], name = 'Region 69 Smoothed Line')
+# 10: L_inferior_temporal_gyrus
+region_10 <- different_region(10)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_10-region_10[1], name = 'Region 10 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_10,5)- rollmean(region_10,5)[1], name = 'Region 10 Smoothed Line')
+# 23: L_postcentral_gyrus
+region_23 <- different_region(23)
+p <- p %>% add_lines(x = 1:dim(imgIn)[4], y = region_23-region_23[1], name = 'Region 23 Original Signal')
+p <- p %>% add_lines(x = 5:dim(imgIn)[4], y = rollmean(region_23,5)- rollmean(region_23,5)[1], name = 'Region 23 Smoothed Line')
+p
+```
+
+
+
+
