@@ -1,6 +1,12 @@
 ---------------------------------------------------------------------------
 # **10/1 Update: Contains some information on the data processing for the fMRI music genre project.**
 
+<p align="center">
+  <img src="fmri_data.png" alt="A single run in the 410`*`1.5s timesteps"/>
+  <h1 align="center">A single run in the 410*1.5s timesteps</h1>
+</p>
+
+
 # Poject Goal
 > Use machine learning to classify music genre and perhaps guide the interpretation of brain decoding of music genre information.
 
