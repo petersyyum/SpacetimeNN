@@ -52,9 +52,13 @@ uses fmriprepped data and Right herschl gyrus region (~611 voxels extracted from
 # Files in the current folder
 
 > AAL_atlas.ipynb: How to transform brain atlas to extract voxels in the fMRI space. python colab to do registration.
+
 > Proj_CNN_training_AAL.ipynb: Preliminary result using CNN+LSTM/ LSTM to classify use extraacted voxels on fMRIpreped data.
+
 > ROI_ana.Rmd: ROI based analysis in R and gymnastics. Rmarkdown to do registration.
-> Try_run_all.ipynb: The fMRIprep script you can run on google drive (you may need extra space). 
+
+> Try_run_all.ipynb: The fMRIprep script you can run on google drive (you may need extra space).
+
 > fMRIpreped pdf file pdf: https://drive.google.com/drive/folders/1-ewJ7c2kcI0oIpoWjTgRSPVRT5Sh-3Mh
 
 
