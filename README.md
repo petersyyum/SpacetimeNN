@@ -50,7 +50,7 @@ uses fmriprepped data and Right herschl gyrus region (~611 voxels extracted from
 > fMRIprep codes
 
 # **TODO:**
-- Test other anatomical region see if we can improve the result
+- Test other anatomical region see if we can improve the result(robustness-five-fold and accuracy wise).
 
 - See if we can average the signal in different ROI regions and get better prediction from ensemble based methods.
 
