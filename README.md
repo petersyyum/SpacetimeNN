@@ -71,3 +71,22 @@ uses fmriprepped data and Right herschl gyrus region (~611 voxels extracted from
 
 - Explore and interpret the neural networks by visualize the intermediate layers to understand how music genre is actually
   classified in ANN to derive insights on the physiology.
+
+# Other architectures and paper links:
+
+[Is Space-Time Attention All You Need for Video Understanding?](https://arxiv.org/pdf/2102.05095)
+
+[Attend and Decode: 4D fMRI Task State Decoding Using Attention Models](https://proceedings.mlr.press/v136/nguyen20a/nguyen20a.pdf)
+> [Github](https://github.com/LLNL/BAnD/blob/main/band/models/resnet3d.py)
+
+## Related biological insights on the brain imaging
+
+[Mass general hospital Auditory Cognition Lab](https://aclab.martinos.org/research-2/)
+> [Spectrotemporal content of human auditory working memory represented in functional connectivity patterns](https://www.nature.com/articles/s42003-023-04675-8)
+
+### Cortical Parcellation
+[A quantified comparison of cortical atlases on the basis of trait morphometricity](https://www.sciencedirect.com/science/article/pii/S0010945222003008)
+
+[Desikan Atlas: An automated labeling system for subdividing the human cerebral cortex on MRI scans into gyral based regions of interest](https://pubmed.ncbi.nlm.nih.gov/16530430/)
+
+
