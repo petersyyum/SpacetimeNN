@@ -61,6 +61,9 @@ uses fmriprepped data and Right herschl gyrus region (~611 voxels extracted from
 
 > fMRIpreped pdf file pdf: https://drive.google.com/drive/folders/1-ewJ7c2kcI0oIpoWjTgRSPVRT5Sh-3Mh
 
+> Transformer_scratch_hubert.ipynb
+Music raw data(X_array.npy): https://drive.google.com/file/d/1EMuGTeNsF70Aw-3aW1x3Dhy24CmLvdWK/view?usp=sharing ; Labels(Y.npy): https://drive.google.com/file/d/1ONK_bjMniMD3pmZ5nNUSraRXhWViCiAd/view?usp=sharing
+
 
 # **TODO:**
 - Test other anatomical region see if we can improve the result(robustness-five-fold and accuracy wise).
