@@ -1,0 +1,69 @@
+#!/bin/bash
+
+#SBATCH --job-name=freesurfer_process       # Job name
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1            ## how many task spaces do you want to reserve
+#SBATCH --account=dinov99            ## name of the resource account (who is paying for the compute time)
+#SBATCH --partition=standard      	## name of the queue to submit the job to.
+#SBATCH --output=output_surfer.txt              # Output file 
+#SBATCH --error=error_surfer.txt               # Error file 
+#SBATCH --cpus-per-task=24                  # Number of CPUs per task
+#SBATCH --time=23:00:00                      # Time limit hrs:min:sec
+#SBATCH --mem=16g                           # Total memory for the job (adjust as needed)
+
+
+
+
+# Set subject ID and directories
+SUBJECT_ID="sub-001"  # Replace with your subject ID
+FREESURFER_WORK="/home/petersyy/fmri_music"  # Your working directory
+SUBJECTS_DIR="$FREESURFER_WORK/subjects"  # FreeSurfer subjects directory
+mkdir -p $SUBJECTS_DIR
+
+# Paths to input data (BIDS-like structure)
+T1_IMAGE="$FREESURFER_WORK/$SUBJECT_ID/anat/${SUBJECT_ID}_T1w.nii"  # Structural MRI
+FUNC_DIR="$FREESURFER_WORK/$SUBJECT_ID/func"  # Directory for functional images
+
+# Check if input files exist
+if [ ! -f "$T1_IMAGE" ]; then
+  echo "Error: T1 image not found at $T1_IMAGE"
+  exit 1
+fi
+
+if [ ! -d "$FUNC_DIR" ]; then
+  echo "Error: Functional directory not found at $FUNC_DIR"
+  exit 1
+fi
+
+# Load FreeSurfer module (example, adjust module loading as needed for your environment)
+module load freesurfer
+
+# Run recon-all for structural MRI
+echo "Processing structural MRI for $SUBJECT_ID..."
+recon-all -s $SUBJECT_ID -i $T1_IMAGE -all -openmp 24 -parallel
+
+# Check if recon-all completed successfully
+if [ $? -eq 0 ]; then
+  echo "Structural processing complete for $SUBJECT_ID!"
+else
+  echo "Error: recon-all failed for $SUBJECT_ID"
+  exit 1
+fi
+
+# Process functional images (example: project to surface)
+for FUNC_IMAGE in $FUNC_DIR/*.nii; do
+  echo "Processing functional image: $(basename $FUNC_IMAGE)"
+
+  # Register functional to structural (example using FreeSurfer's bbregister)
+  bbregister --s $SUBJECT_ID --mov $FUNC_IMAGE --reg $FUNC_DIR/$(basename $FUNC_IMAGE .nii)_reg.dat --init-fsl --bold
+
+  # Project functional data to surface (example for left hemisphere)
+  mri_vol2surf --mov $FUNC_IMAGE --reg $FUNC_DIR/$(basename $FUNC_IMAGE .nii)_reg.dat --hemi lh --o $FUNC_DIR/$(basename $FUNC_IMAGE .nii)_lh.func.gii --projfrac-avg 0 1 0.1
+
+  # Register to fsaverage sphere
+  mri_surf2surf --srcsubject $SUBJECT_ID --trgsubject fsaverage --hemi lh --sval $FUNC_DIR/$(basename $FUNC_IMAGE .nii)_lh.func.gii --tval $FUNC_DIR/$(basename $FUNC_IMAGE .nii)_lh.func.fsaverage.gii
+
+  echo "Functional image $(basename $FUNC_IMAGE) processed, mapped to surface, and registered to fsaverage."
+done
+
+echo "All processing complete for $SUBJECT_ID!"
