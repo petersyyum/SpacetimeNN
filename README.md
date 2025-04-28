@@ -1,3 +1,6 @@
+
+![fMRI music genre data contrast for one specific run](https://github.com/petersyyum/SpacetimeNN/blob/main/figures/fMRI_music_contrast-dis.svg)
+
 ---------------------------------------------------------------------------
 # **10/1 Update: Contains some information on the data processing for the fMRI music genre project.**
 
